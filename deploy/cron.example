@@ -1,0 +1,7 @@
+# Cron job examples for cPanel and shared hosting
+#
+# Process queued media downloads every minute (adjust path as needed):
+* * * * * cd /home/project/media-downloader-bot && .venv/bin/python -m src.media_bot.cli worker --once >> data/worker_cron.log 2>&1
+#
+# Daily backup at 03:00 AM:
+0 3 * * * /home/project/media-downloader-bot/scripts/backup.sh >> /home/project/media-downloader-bot/data/backup_cron.log 2>&1

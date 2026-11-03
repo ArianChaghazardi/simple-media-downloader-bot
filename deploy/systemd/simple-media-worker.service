@@ -1,0 +1,16 @@
+[Unit]
+Description=Simple Media Downloader Telegram Bot Background Worker
+After=network.target
+
+[Service]
+Type=simple
+User=pachim
+WorkingDirectory=/path/to/simple-media-downloader-bot
+ExecStart=/path/to/simple-media-downloader-bot/.venv/bin/python -u -m src.media_bot.cli worker
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
