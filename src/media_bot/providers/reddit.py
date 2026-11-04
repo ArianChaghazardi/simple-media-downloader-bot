@@ -104,6 +104,7 @@ def download_reddit_media(
     ffmpeg_path: Optional[str] = None,
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
 ) -> Dict[str, Any]:
     is_valid, platform, err = validate_url(url)
     if not is_valid or platform != "reddit":
@@ -126,7 +127,11 @@ def download_reddit_media(
         "no_warnings": True,
         "concurrent_fragment_downloads": 8,
         "buffersize": 1048576,
+        "http_chunk_size": 10485760,
     }
+
+    if progress_callback:
+        ydl_opts["progress_hooks"] = [progress_callback]
 
     if cookies_path and os.path.isfile(cookies_path):
         ydl_opts["cookiefile"] = cookies_path

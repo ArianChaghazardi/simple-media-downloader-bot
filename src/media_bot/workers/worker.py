@@ -43,6 +43,8 @@ from src.media_bot.providers.youtube import download_youtube_media
 from src.media_bot.services.job_service import (
     estimate_compressed_size_mb,
     format_job_status,
+    format_live_download_progress,
+    make_progress_bar,
     probe_media_duration,
 )
 from src.media_bot.services.quota_service import record_successful_download
@@ -76,7 +78,59 @@ def execute_single_job(
     status_msg_id = payload.get("status_message_id")
     platform = payload.get("platform") or job_type.split("_")[0]
 
-    # Provide immediate visual progress feedback (50%)
+    last_progress_edit = [0.0]
+
+    def on_download_progress(d: Dict[str, Any]) -> None:
+        if not status_msg_id:
+            return
+        status = d.get("status")
+        now = time.time()
+        # Rate limit edits to once every 2.5 seconds to respect Telegram limits
+        if now - last_progress_edit[0] < 2.5:
+            return
+
+        if status == "downloading":
+            downloaded = d.get("downloaded_bytes", 0)
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            if total > 0:
+                calc_percent = int((downloaded / total) * 100)
+                percent = min(95, max(15, calc_percent))
+            else:
+                percent = 50
+            speed_str = d.get("_speed_str", "")
+            eta_str = d.get("_eta_str", "")
+            text = format_live_download_progress(
+                platform=platform,
+                percent=percent,
+                downloaded_bytes=downloaded,
+                total_bytes=total,
+                speed_str=speed_str,
+                eta_str=eta_str,
+                locale=locale,
+            )
+            try:
+                edit_message_text(bot_token, chat_id, status_msg_id, text)
+                send_chat_action(
+                    bot_token,
+                    chat_id,
+                    "record_video" if "video" in job_type else "record_voice",
+                )
+                last_progress_edit[0] = now
+            except Exception:
+                pass
+        elif status == "finished":
+            text = (
+                f"⚙️ <b>در حال پردازش و آماده سازی نهایی فایل...</b>\n\n"
+                f"📊 پیشرفت: <code>[{make_progress_bar(90)}] 90%</code>\n\n"
+                f"<i>فایل دریافت شد؛ در حال بسته بندی و آماده سازی برای ارسال...</i>"
+            )
+            try:
+                edit_message_text(bot_token, chat_id, status_msg_id, text)
+                last_progress_edit[0] = now
+            except Exception:
+                pass
+
+    # Provide immediate visual progress feedback (30%)
     if status_msg_id:
         try:
             edit_message_text(
@@ -86,7 +140,7 @@ def execute_single_job(
                 format_job_status(
                     platform=platform,
                     step="downloading",
-                    percent=50,
+                    percent=30,
                     locale=locale,
                 ),
             )
@@ -104,6 +158,7 @@ def execute_single_job(
                 ffmpeg_path=ffmpeg_path,
                 cookies_path=cookies_path,
                 proxy_url=proxy_url,
+                progress_callback=on_download_progress,
             )
 
         elif job_type in ("x_download", "x_media"):
@@ -135,6 +190,7 @@ def execute_single_job(
                 ffmpeg_path=ffmpeg_path,
                 cookies_path=cookies_path,
                 proxy_url=proxy_url,
+                progress_callback=on_download_progress,
             )
 
         else:
@@ -254,6 +310,18 @@ def execute_single_job(
             keep_file = True
             logger.info("Job #%d paused: awaiting large file choice from user %d", job_id, user_id)
             return True
+
+        # Provide visual feedback that file is now being uploaded to Telegram (95%)
+        if status_msg_id:
+            try:
+                upload_status_text = (
+                    f"🚀 <b>در حال ارسال فایل به تلگرام...</b>\n\n"
+                    f"📊 پیشرفت: <code>[{make_progress_bar(95)}] 95%</code>\n\n"
+                    f"<i>فایل با موفقیت آماده شد؛ در حال آپلود...</i>"
+                )
+                edit_message_text(bot_token, chat_id, status_msg_id, upload_status_text)
+            except Exception:
+                pass
 
         # Trigger native Telegram uploading status
         if len(file_paths) > 1:

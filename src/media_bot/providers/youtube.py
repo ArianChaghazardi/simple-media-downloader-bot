@@ -97,6 +97,9 @@ def download_youtube_media(
     ffmpeg_path: Optional[str] = None,
     cookies_path: Optional[str] = None,
     proxy_url: Optional[str] = None,
+    quality: Optional[str] = None,
+    format_spec: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
 ) -> Dict[str, Any]:
     is_valid, platform, err = validate_url(url)
     if not is_valid or platform != "youtube":
@@ -123,7 +126,17 @@ def download_youtube_media(
     # Tier 4: Alternative Player Clients via WARP Proxy
     tiers: List[Dict[str, Any]] = []
 
-    # Priority 1: POT provider active
+    # Priority 1: If valid cookies are available, try direct connection first (highest speed, up to 90+ MB/s!)
+    if temp_cookie_path:
+        tiers.append({
+            "tier_name": "cookies_direct",
+            "cookiefile": temp_cookie_path,
+            "proxy": proxy_url or os.environ.get("PROXY_URL"),
+            "player_clients": ["web_embedded", "web", "mweb"],
+            "pot_provider": pot_provider,
+        })
+
+    # Priority 2: POT provider active + WARP
     if pot_provider:
         primary_proxy = warp_proxy or proxy_url or os.environ.get("PROXY_URL")
         tiers.append({
@@ -142,18 +155,8 @@ def download_youtube_media(
                 "pot_provider": pot_provider,
             })
 
-    # Priority 2: Cookies + direct/explicit proxy
-    tier_direct: Dict[str, Any] = {
-        "tier_name": "cookies_direct",
-        "cookiefile": temp_cookie_path,
-        "proxy": proxy_url or os.environ.get("PROXY_URL"),
-        "player_clients": ["web_embedded", "web", "mweb"],
-        "pot_provider": pot_provider,
-    }
-    tiers.append(tier_direct)
-
     # Priority 3: Cookies + WARP proxy
-    if warp_proxy and warp_proxy != tier_direct.get("proxy"):
+    if warp_proxy and temp_cookie_path:
         tiers.append({
             "tier_name": "cookies_warp",
             "cookiefile": temp_cookie_path,
@@ -188,16 +191,35 @@ def download_youtube_media(
 
             ydl_opts: Dict[str, Any] = {
                 "outtmpl": out_tmpl,
-                "format": "best[filesize<=52428800]/best[filesize_approx<=52428800]/bestvideo[height<=720]+bestaudio/best[height<=720]/18/best",
-                "concurrent_fragment_downloads": 8,
-                "buffersize": 1048576,
-                "http_chunk_size": 10485760,
-                "max_filesize": max_bytes,
                 "noplaylist": True,
                 "quiet": True,
                 "no_warnings": True,
                 "extractor_args": ext_args,
+                "concurrent_fragment_downloads": 8,
+                "buffersize": 1048576,
+                "http_chunk_size": 10485760,
             }
+
+            if progress_callback:
+                ydl_opts["progress_hooks"] = [progress_callback]
+
+            if quality == "audio":
+                ydl_opts["format"] = "bestaudio/best"
+                ydl_opts["postprocessors"] = [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "192",
+                    }
+                ]
+            elif format_spec:
+                ydl_opts["format"] = format_spec
+                ydl_opts["merge_output_format"] = "mp4"
+            else:
+                ydl_opts["format"] = "best[filesize<=52428800]/best[filesize_approx<=52428800]/best[ext=mp4]/best"
+
+            if max_bytes:
+                ydl_opts["max_filesize"] = max_bytes
 
             if tier.get("cookiefile"):
                 ydl_opts["cookiefile"] = tier["cookiefile"]
@@ -220,9 +242,23 @@ def download_youtube_media(
 
                     file_path = ydl.prepare_filename(info)
                     if not os.path.exists(file_path):
-                        candidates = list(out_path_obj.glob(f"yt_{unique_token}_*"))
-                        if candidates:
-                            file_path = str(candidates[0])
+                        candidates = [
+                            str(p)
+                            for p in out_path_obj.glob(f"yt_{unique_token}_*")
+                            if not str(p).endswith((".part", ".ytdl"))
+                        ]
+                        if quality == "audio":
+                            audio_cands = [p for p in candidates if p.endswith((".mp3", ".m4a", ".aac", ".ogg"))]
+                            if audio_cands:
+                                file_path = audio_cands[0]
+                            elif candidates:
+                                file_path = candidates[0]
+                            else:
+                                last_error_code = "file_missing"
+                                last_error_msg = "Downloaded file not found on disk"
+                                continue
+                        elif candidates:
+                            file_path = candidates[0]
                         else:
                             last_error_code = "file_missing"
                             last_error_msg = "Downloaded file not found on disk"

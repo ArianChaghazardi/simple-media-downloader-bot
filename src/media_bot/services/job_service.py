@@ -206,12 +206,15 @@ def create_download_job(
     max_queue_size: int = 50,
     status_message_id: Optional[int] = None,
     paid_with_coins: bool = False,
+    quality: Optional[str] = None,
+    format_spec: Optional[str] = None,
 ) -> Dict[str, Any]:
     pending = count_pending_jobs(conn, database_url)
     if pending >= max_queue_size:
         return {"ok": False, "error": "queue_full", "pending_jobs": pending}
 
-    idemp_key = _make_idempotency_key(platform, user_id, url)
+    idemp_target = f"{url}:{quality}" if quality else url
+    idemp_key = _make_idempotency_key(platform, user_id, idemp_target)
     payload: Dict[str, Any] = {
         "platform": platform,
         "url": url,
@@ -221,6 +224,10 @@ def create_download_job(
     }
     if status_message_id is not None:
         payload["status_message_id"] = status_message_id
+    if quality:
+        payload["quality"] = quality
+    if format_spec:
+        payload["format_spec"] = format_spec
 
     job_id = enqueue_job(
         conn,
@@ -272,3 +279,64 @@ def estimate_compressed_size_mb(
         estimated = orig_mb * 0.40
 
     return round(estimated, 1)
+
+
+def format_live_download_progress(
+    platform: str,
+    percent: int,
+    downloaded_bytes: int = 0,
+    total_bytes: int = 0,
+    speed_str: str = "",
+    eta_str: str = "",
+    locale: str = "fa",
+) -> str:
+    bar = make_progress_bar(percent)
+    platform_key = (platform or "media").lower()
+
+    if locale == "fa":
+        names_fa = {
+            "youtube": "یوتیوب (YouTube)",
+            "instagram": "اینستاگرام (Instagram)",
+            "x": "توییتر / ایکس (Twitter/X)",
+            "twitter": "توییتر / ایکس (Twitter/X)",
+            "tiktok": "تیک تاک (TikTok)",
+            "pinterest": "پینترست (Pinterest)",
+            "threads": "تردز (Threads)",
+            "reddit": "ردیت (Reddit)",
+        }
+        plat_name = names_fa.get(platform_key, "مدیا")
+        details = []
+
+        if downloaded_bytes and total_bytes:
+            dl_mb = downloaded_bytes / (1024 * 1024)
+            tot_mb = total_bytes / (1024 * 1024)
+            details.append(f"📦 حجم: <b>{dl_mb:.1f} از {tot_mb:.1f} مگابایت</b>")
+        elif downloaded_bytes:
+            dl_mb = downloaded_bytes / (1024 * 1024)
+            details.append(f"📦 حجم دریافت شده: <b>{dl_mb:.1f} مگابایت</b>")
+
+        if speed_str:
+            spd = speed_str.strip().replace("MiB/s", "MB/s").replace("KiB/s", "KB/s")
+            details.append(f"⚡️ سرعت دانلود: <b>{spd}</b>")
+
+        if eta_str and eta_str != "Unknown":
+            clean_eta = eta_str.strip()
+            details.append(f"⏳ زمان باقیمانده: <b>{clean_eta}</b>")
+
+        extra_info = "\n".join(details)
+        if extra_info:
+            extra_info = "\n" + extra_info + "\n"
+
+        return (
+            f"📥 <b>در حال دانلود از سرور...</b>\n\n"
+            f"🌐 پلتفرم: <b>{plat_name}</b>\n"
+            f"📊 پیشرفت: <code>[{bar}] {percent}%</code>\n"
+            f"{extra_info}\n"
+            f"<i>دانلود در جریان است، لطفا شکیبا باشید...</i>"
+        )
+    else:
+        return (
+            f"📥 <b>Downloading from server...</b>\n\n"
+            f"📊 Progress: <code>[{bar}] {percent}%</code>\n\n"
+            f"<i>Please wait a moment...</i>"
+        )
