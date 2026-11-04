@@ -371,6 +371,72 @@ def send_photo(
     return send_file(bot_token, "sendPhoto", chat_id, "photo", photo_path, caption)
 
 
+def send_media_group(
+    bot_token: str,
+    chat_id: Union[int, str],
+    media_paths: List[str],
+    caption: Optional[str] = None,
+    timeout: int = 120,
+) -> Dict[str, Any]:
+    if not media_paths:
+        return {"ok": False, "error_code": 400, "description": "Empty media paths"}
+
+    media_items: List[Dict[str, Any]] = []
+    files: Dict[str, Tuple[str, bytes, str]] = {}
+
+    for idx, path_str in enumerate(media_paths[:10]):
+        p = Path(path_str)
+        if not p.is_file():
+            continue
+        ext = p.suffix.lower()
+        m_type = "video" if ext in (".mp4", ".mov", ".mkv", ".webm") else "photo"
+        field_name = f"media_{idx}"
+        mime_type, _ = mimetypes.guess_type(p.name)
+        if not mime_type:
+            mime_type = "video/mp4" if m_type == "video" else "image/jpeg"
+
+        files[field_name] = (p.name, p.read_bytes(), mime_type)
+        item: Dict[str, Any] = {
+            "type": m_type,
+            "media": f"attach://{field_name}",
+        }
+        if idx == 0 and caption:
+            item["caption"] = caption
+            item["parse_mode"] = "HTML"
+        media_items.append(item)
+
+    if not media_items:
+        return {"ok": False, "error_code": 404, "description": "No valid files found for media group"}
+
+    fields: Dict[str, Any] = {
+        "chat_id": chat_id,
+        "media": media_items,
+    }
+
+    boundary = f"----WebKitFormBoundary{os.urandom(16).hex()}"
+    data = _build_multipart_payload(fields, files, boundary)
+
+    url = f"{TELEGRAM_API_BASE}/bot{bot_token}/sendMediaGroup"
+    headers = {
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(data)),
+    }
+
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body)
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode("utf-8", errors="ignore")
+        try:
+            return json.loads(error_body)
+        except Exception:
+            return {"ok": False, "error_code": e.code, "description": e.reason}
+    except Exception as e:
+        return {"ok": False, "error_code": 0, "description": str(e)}
+
+
 def send_document(
     bot_token: str,
     chat_id: Union[int, str],

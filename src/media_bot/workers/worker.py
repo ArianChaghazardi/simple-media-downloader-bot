@@ -15,6 +15,7 @@ from src.media_bot.bot_api.client import (
     send_audio,
     send_chat_action,
     send_document,
+    send_media_group,
     send_message,
     send_photo,
     send_video,
@@ -175,6 +176,7 @@ def execute_single_job(
                 pass
 
         downloaded_file = result.get("file_path")
+        file_paths = result.get("file_paths") or ([downloaded_file] if downloaded_file else [])
         title = result.get("title", "")
         bot_username = cfg.get("BOT_USERNAME", "")
         bot_tag = f"@{bot_username}" if bot_username else ""
@@ -253,62 +255,86 @@ def execute_single_job(
             return True
 
         # Trigger native Telegram uploading status
-        action = "upload_video"
-        if ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac", ".flac"):
-            action = "upload_voice"
-        elif ext in (".jpg", ".jpeg", ".png", ".webp"):
-            action = "upload_photo"
-        elif ext in (".mp4", ".mov", ".mkv", ".webm"):
+        if len(file_paths) > 1:
+            try:
+                send_chat_action(bot_token, chat_id, "upload_photo")
+            except Exception:
+                pass
+
+            res = send_media_group(
+                bot_token,
+                chat_id,
+                media_paths=file_paths,
+                caption=caption,
+            )
+            if not res.get("ok"):
+                logger.warning(
+                    "send_media_group failed (%s), falling back to single photo",
+                    res.get("description"),
+                )
+                res = send_photo(
+                    bot_token,
+                    chat_id,
+                    photo_path=downloaded_file,
+                    caption=caption,
+                )
+        else:
             action = "upload_video"
-        else:
-            action = "upload_document"
+            if ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac", ".flac"):
+                action = "upload_voice"
+            elif ext in (".jpg", ".jpeg", ".png", ".webp"):
+                action = "upload_photo"
+            elif ext in (".mp4", ".mov", ".mkv", ".webm"):
+                action = "upload_video"
+            else:
+                action = "upload_document"
 
-        try:
-            send_chat_action(bot_token, chat_id, action)
-        except Exception:
-            pass
+            try:
+                send_chat_action(bot_token, chat_id, action)
+            except Exception:
+                pass
 
-        if ext in (
-            ".mp3",
-            ".m4a",
-            ".ogg",
-            ".wav",
-            ".aac",
-            ".flac",
-        ):
-            res = send_audio(
-                bot_token,
-                chat_id,
-                audio_path=downloaded_file,
-                caption=caption,
-                title=title,
-                performer=result.get("performer"),
-                duration=result.get("duration"),
-            )
-        elif ext in (".jpg", ".jpeg", ".png", ".webp"):
-            res = send_photo(
-                bot_token,
-                chat_id,
-                photo_path=downloaded_file,
-                caption=caption,
-            )
-        elif ext in (".mp4", ".mov", ".mkv", ".webm"):
-            res = send_video(
-                bot_token,
-                chat_id,
-                video_path=downloaded_file,
-                caption=caption,
-                duration=result.get("duration"),
-                width=result.get("width"),
-                height=result.get("height"),
-            )
-        else:
-            res = send_document(
-                bot_token,
-                chat_id,
-                document_path=downloaded_file,
-                caption=caption,
-            )
+            if ext in (
+                ".mp3",
+                ".m4a",
+                ".ogg",
+                ".wav",
+                ".aac",
+                ".flac",
+            ):
+                res = send_audio(
+                    bot_token,
+                    chat_id,
+                    audio_path=downloaded_file,
+                    caption=caption,
+                    title=title,
+                    performer=result.get("performer"),
+                    duration=result.get("duration"),
+                )
+            elif ext in (".jpg", ".jpeg", ".png", ".webp"):
+                res = send_photo(
+                    bot_token,
+                    chat_id,
+                    photo_path=downloaded_file,
+                    caption=caption,
+                )
+            elif ext in (".mp4", ".mov", ".mkv", ".webm"):
+                res = send_video(
+                    bot_token,
+                    chat_id,
+                    video_path=downloaded_file,
+                    caption=caption,
+                    duration=result.get("duration"),
+                    width=result.get("width"),
+                    height=result.get("height"),
+                )
+            else:
+                res = send_document(
+                    bot_token,
+                    chat_id,
+                    document_path=downloaded_file,
+                    caption=caption,
+                )
 
         if not res.get("ok"):
             raw_desc = res.get("description", "Failed to upload media to Telegram")
@@ -368,8 +394,12 @@ def execute_single_job(
         return False
 
     finally:
-        if downloaded_file and not keep_file:
-            safe_delete_file(downloaded_file)
+        if not keep_file:
+            if downloaded_file:
+                safe_delete_file(downloaded_file)
+            for extra_p in (result.get("file_paths") if result else []) or []:
+                if extra_p and extra_p != downloaded_file:
+                    safe_delete_file(extra_p)
 
 
 def run_worker_cycle(
