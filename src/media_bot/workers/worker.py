@@ -7,7 +7,8 @@ Zero custom classes.
 import os
 import time
 import uuid
-from typing import Any, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.media_bot.bot_api.client import (
     delete_message,
@@ -402,6 +403,22 @@ def execute_single_job(
                     safe_delete_file(extra_p)
 
 
+def _run_single_job_task(
+    cfg: Dict[str, Any],
+    job: Dict[str, Any],
+) -> bool:
+    """
+    Worker task entrypoint executed inside a worker thread.
+    Opens its own dedicated DB connection, executes the job, and ensures clean closure.
+    """
+    database_url = cfg["DATABASE_URL"]
+    conn = create_connection(database_url)
+    try:
+        return execute_single_job(cfg, conn, job)
+    finally:
+        close_connection(conn)
+
+
 def run_worker_cycle(
     cfg: Dict[str, Any],
     worker_id: Optional[str] = None,
@@ -418,7 +435,11 @@ def run_worker_cycle(
         recover_stale_jobs(conn, database_url)
         clean_expired_files(cfg["TEMP_DIR"], cfg.get("FILE_RETENTION_HOURS", 2))
 
-        while processed < max_jobs:
+        max_concurrent = max(1, int(cfg.get("MAX_CONCURRENT_JOBS", 5)))
+        batch_limit = min(max_jobs, max_concurrent)
+        claimed_jobs: List[Dict[str, Any]] = []
+
+        for _ in range(batch_limit):
             job = claim_next_job(
                 conn,
                 database_url,
@@ -427,9 +448,23 @@ def run_worker_cycle(
             )
             if not job:
                 break
+            claimed_jobs.append(job)
 
-            execute_single_job(cfg, conn, job)
+        if not claimed_jobs:
+            return 0
+
+        if len(claimed_jobs) == 1:
+            execute_single_job(cfg, conn, claimed_jobs[0])
             processed += 1
+        else:
+            with ThreadPoolExecutor(max_workers=len(claimed_jobs)) as executor:
+                futures = [executor.submit(_run_single_job_task, cfg, j) for j in claimed_jobs]
+                for f in futures:
+                    try:
+                        f.result()
+                        processed += 1
+                    except Exception as e:
+                        logger.error("Error executing job in thread pool: %s", str(e))
 
     finally:
         close_connection(conn)
@@ -439,14 +474,64 @@ def run_worker_cycle(
 
 def run_worker_loop(
     cfg: Dict[str, Any],
-    interval_seconds: int = 3,
+    interval_seconds: int = 1,
 ) -> None:
-    worker_id = f"worker_{os.getpid()}_{uuid.uuid4().hex[:6]}"
-    logger.info("Starting worker loop %s (interval=%ds)", worker_id, interval_seconds)
+    max_concurrent = max(1, int(cfg.get("MAX_CONCURRENT_JOBS", 5)))
+    worker_id_base = f"worker_{os.getpid()}_{uuid.uuid4().hex[:4]}"
+    logger.info(
+        "Starting multi-threaded media worker loop %s (concurrency=%d, poll_interval=%ds)",
+        worker_id_base,
+        max_concurrent,
+        interval_seconds,
+    )
 
-    while True:
-        try:
-            run_worker_cycle(cfg, worker_id=worker_id, max_jobs=10)
-        except Exception as e:
-            logger.error("Error in worker loop: %s", str(e))
-        time.sleep(interval_seconds)
+    database_url = cfg["DATABASE_URL"]
+    active_tasks: Dict[Any, Tuple[int, str, str]] = {}
+    last_maintenance = 0.0
+
+    with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+        while True:
+            try:
+                now_ts = time.time()
+                if now_ts - last_maintenance >= 30.0:
+                    last_maintenance = now_ts
+                    m_conn = create_connection(database_url)
+                    try:
+                        recover_stale_jobs(m_conn, database_url)
+                        clean_expired_files(cfg["TEMP_DIR"], cfg.get("FILE_RETENTION_HOURS", 2))
+                    finally:
+                        close_connection(m_conn)
+
+                done_futures = [f for f in active_tasks if f.done()]
+                for f in done_futures:
+                    jid, jtype, wid = active_tasks.pop(f)
+                    try:
+                        f.result()
+                    except Exception as e:
+                        logger.error("Job #%d (%s) worker thread raised error: %s", jid, jtype, str(e))
+
+                available_slots = max_concurrent - len(active_tasks)
+                if available_slots > 0:
+                    claim_conn = create_connection(database_url)
+                    try:
+                        for _ in range(available_slots):
+                            sub_wid = f"{worker_id_base}_{uuid.uuid4().hex[:4]}"
+                            job = claim_next_job(
+                                claim_conn,
+                                database_url,
+                                worker_id=sub_wid,
+                                lease_seconds=cfg.get("JOB_TIMEOUT_SECONDS", 300),
+                            )
+                            if not job:
+                                break
+
+                            job_type = job.get("job_type", "")
+                            future = executor.submit(_run_single_job_task, cfg, job)
+                            active_tasks[future] = (job["id"], job_type, sub_wid)
+                    finally:
+                        close_connection(claim_conn)
+
+            except Exception as e:
+                logger.error("Error in worker loop iteration: %s", str(e))
+
+            time.sleep(interval_seconds)

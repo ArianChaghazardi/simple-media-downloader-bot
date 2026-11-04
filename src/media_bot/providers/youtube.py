@@ -189,7 +189,9 @@ def download_youtube_media(
             ydl_opts: Dict[str, Any] = {
                 "outtmpl": out_tmpl,
                 "format": "best[filesize<=52428800]/best[filesize_approx<=52428800]/bestvideo[height<=720]+bestaudio/best[height<=720]/18/best",
-                "concurrent_fragment_downloads": 4,
+                "concurrent_fragment_downloads": 8,
+                "buffersize": 1048576,
+                "http_chunk_size": 10485760,
                 "max_filesize": max_bytes,
                 "noplaylist": True,
                 "quiet": True,

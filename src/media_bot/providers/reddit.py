@@ -124,6 +124,8 @@ def download_reddit_media(
         "max_filesize": max_bytes,
         "quiet": True,
         "no_warnings": True,
+        "concurrent_fragment_downloads": 8,
+        "buffersize": 1048576,
     }
 
     if cookies_path and os.path.isfile(cookies_path):
