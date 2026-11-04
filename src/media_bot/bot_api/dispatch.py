@@ -12,6 +12,7 @@ from src.media_bot.bot_api.updates import (
     parse_update,
 )
 from src.media_bot.db.repositories.user_states import get_user_state
+from src.media_bot.db.repositories.downloads_stats import record_user_activity
 from src.media_bot.db.repositories.users import is_user_banned
 from src.media_bot.handlers.admin import (
     handle_admin_home,
@@ -57,6 +58,12 @@ def dispatch_update(
 
     if not user_id or not chat_id:
         return
+
+    # Record user active interaction for DAU/WAU/MAU
+    try:
+        record_user_activity(conn, database_url, user_id)
+    except Exception:
+        pass
 
     # Check ban status
     if is_user_banned(conn, database_url, user_id):

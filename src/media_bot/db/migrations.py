@@ -28,6 +28,7 @@ def _adapt_migration_sql(sql_content: str, backend: str) -> str:
             sql_content,
             flags=re.IGNORECASE,
         )
+        adapted = re.sub(r"INSERT OR IGNORE", "INSERT IGNORE", adapted, flags=re.IGNORECASE)
         return adapted
     return sql_content
 
