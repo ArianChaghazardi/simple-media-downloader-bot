@@ -21,6 +21,7 @@ from src.media_bot.bot_api.client import (
 from src.media_bot.bot_api.keyboards import large_file_options_keyboard
 from src.media_bot.db.repositories.jobs import complete_job, get_job
 from src.media_bot.db.repositories.users import get_and_reset_daily_quota
+from src.media_bot.services.ad_service import deliver_post_download_ad
 from src.media_bot.services.job_service import (
     estimate_compressed_size_mb,
     format_large_file_progress,
@@ -240,7 +241,6 @@ def handle_large_file_choice(
                         msg_id,
                         format_large_file_progress(title, action="audio", percent=pct, locale=locale),
                     )
-                    send_chat_action(bot_token, chat_id, "upload_voice")
                 except Exception:
                     pass
 
@@ -276,7 +276,7 @@ def handle_large_file_choice(
                 except Exception:
                     pass
             caption = f"<b>{title}</b>\n\n🎙 نسخه صوتی با کیفیت اصلی\n\n{bot_tag}".strip()
-            send_chat_action(bot_token, chat_id, "upload_voice")
+            send_chat_action(bot_token, chat_id, "upload_document")
             send_audio(
                 bot_token,
                 chat_id,
@@ -295,6 +295,7 @@ def handle_large_file_choice(
             complete_job(conn, database_url, job_id, {"status": "sent", "mode": "audio"})
             try:
                 record_successful_download(conn, database_url, user_id, chat_id, payload.get("platform", "media"), is_group=is_grp)
+                deliver_post_download_ad(cfg, conn, chat_id, user_id, is_vip=False)
             except Exception:
                 pass
         except Exception as e:
@@ -455,6 +456,7 @@ def handle_large_file_choice(
             complete_job(conn, database_url, job_id, {"status": "sent", "mode": "compressed"})
             try:
                 record_successful_download(conn, database_url, user_id, chat_id, payload.get("platform", "media"), is_group=is_grp)
+                deliver_post_download_ad(cfg, conn, chat_id, user_id, is_vip=False)
             except Exception:
                 pass
         except Exception as e:

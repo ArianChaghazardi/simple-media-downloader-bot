@@ -78,6 +78,18 @@ def execute_single_job(
     status_msg_id = payload.get("status_message_id")
     platform = payload.get("platform") or job_type.split("_")[0]
 
+    names_fa = {
+        "youtube": "یوتیوب (YouTube)",
+        "instagram": "اینستاگرام (Instagram)",
+        "x": "توییتر / ایکس (Twitter/X)",
+        "twitter": "توییتر / ایکس (Twitter/X)",
+        "tiktok": "تیک تاک (TikTok)",
+        "pinterest": "پینترست (Pinterest)",
+        "threads": "تردز (Threads)",
+        "reddit": "ردیت (Reddit)",
+    }
+    plat_name = names_fa.get(platform.lower(), "مدیا")
+
     last_progress_edit = [0.0]
 
     def on_download_progress(d: Dict[str, Any]) -> None:
@@ -110,19 +122,16 @@ def execute_single_job(
             )
             try:
                 edit_message_text(bot_token, chat_id, status_msg_id, text)
-                send_chat_action(
-                    bot_token,
-                    chat_id,
-                    "record_video" if "video" in job_type else "record_voice",
-                )
                 last_progress_edit[0] = now
             except Exception:
                 pass
         elif status == "finished":
             text = (
-                f"⚙️ <b>در حال پردازش و آماده سازی نهایی فایل...</b>\n\n"
-                f"📊 پیشرفت: <code>[{make_progress_bar(90)}] 90%</code>\n\n"
-                f"<i>فایل دریافت شد؛ در حال بسته بندی و آماده سازی برای ارسال...</i>"
+                f"✅ <b>دانلود از {plat_name} انجام شد!</b>\n\n"
+                f"🌐 پلتفرم: <b>{plat_name}</b>\n"
+                f"🔄 مرحله: <b>پردازش نهایی و آماده سازی فایل</b>\n"
+                f"📊 پیشرفت: <code>[{make_progress_bar(85)}] 85%</code>\n\n"
+                f"<i>فایل دریافت شد؛ در حال بسته بندی برای ارسال به تلگرام...</i>"
             )
             try:
                 edit_message_text(bot_token, chat_id, status_msg_id, text)
@@ -315,9 +324,11 @@ def execute_single_job(
         if status_msg_id:
             try:
                 upload_status_text = (
-                    f"🚀 <b>در حال ارسال فایل به تلگرام...</b>\n\n"
+                    f"🚀 <b>فایل دانلود شد؛ در حال ارسال به تلگرام...</b>\n\n"
+                    f"🌐 پلتفرم: <b>{plat_name}</b>\n"
+                    f"🔄 مرحله: <b>ارسال مستقیم به تلگرام (مرحله نهایی)</b>\n"
                     f"📊 پیشرفت: <code>[{make_progress_bar(95)}] 95%</code>\n\n"
-                    f"<i>فایل با موفقیت آماده شد؛ در حال آپلود...</i>"
+                    f"<i>در حال آپلود و تحویل مدیا به چت شما...</i>"
                 )
                 edit_message_text(bot_token, chat_id, status_msg_id, upload_status_text)
             except Exception:
@@ -350,7 +361,7 @@ def execute_single_job(
         else:
             action = "upload_video"
             if ext in (".mp3", ".m4a", ".ogg", ".wav", ".aac", ".flac"):
-                action = "upload_voice"
+                action = "upload_document"
             elif ext in (".jpg", ".jpeg", ".png", ".webp"):
                 action = "upload_photo"
             elif ext in (".mp4", ".mov", ".mkv", ".webm"):

@@ -47,25 +47,25 @@ def format_job_status(
 
         if step == "downloading":
             return (
-                f"📥 <b>در حال پردازش و دانلود مدیا...</b>\n\n"
+                f"📥 <b>در حال دانلود از {plat_name}...</b>\n\n"
                 f"🌐 پلتفرم: <b>{plat_name}</b>\n"
-                f"🔄 وضعیت: <b>در حال دریافت بهترین کیفیت از سرور...</b>\n"
+                f"🔄 مرحله: <b>دریافت مدیا از منبع اصلی (مرحله ۲ از ۳)</b>\n"
                 f"📊 پیشرفت: <code>[{bar}] {percent}%</code>\n\n"
-                f"<i>لطفا کمی صبور باشید...</i>"
+                f"<i>در حال اتصال و دانلود فایل با بالاترین کیفیت...</i>"
             )
         elif step == "uploading":
             return (
-                f"🚀 <b>در حال ارسال فایل...</b>\n\n"
+                f"🚀 <b>فایل دانلود شد؛ در حال ارسال به تلگرام...</b>\n\n"
                 f"🌐 پلتفرم: <b>{plat_name}</b>\n"
-                f"🔄 وضعیت: <b>در حال آپلود و تحویل به تلگرام...</b>\n"
+                f"🔄 مرحله: <b>ارسال مستقیم به تلگرام (مرحله ۳ از ۳)</b>\n"
                 f"📊 پیشرفت: <code>[{bar}] {percent}%</code>\n\n"
-                f"<i>ارسال تا چند لحظه دیگر انجام می شود...</i>"
+                f"<i>در حال آپلود نهایی فایل در تلگرام...</i>"
             )
         else:  # queued
             return (
                 f"⚡️ <b>درخواست شما با موفقیت ثبت شد!</b>\n\n"
                 f"🌐 پلتفرم: <b>{plat_name}</b>\n"
-                f"🔄 وضعیت: <b>در حال بررسی لینک و آماده سازی دانلود...</b>\n"
+                f"🔄 مرحله: <b>بررسی لینک و آماده سازی دانلود (مرحله ۱ از ۳)</b>\n"
                 f"📊 پیشرفت: <code>[{bar}] {percent}%</code>\n\n"
                 f"<i>لطفا چند لحظه صبور باشید...</i>"
             )
@@ -310,7 +310,7 @@ def format_live_download_progress(
         if downloaded_bytes and total_bytes:
             dl_mb = downloaded_bytes / (1024 * 1024)
             tot_mb = total_bytes / (1024 * 1024)
-            details.append(f"📦 حجم: <b>{dl_mb:.1f} از {tot_mb:.1f} مگابایت</b>")
+            details.append(f"📦 حجم فایل: <b>{dl_mb:.1f} از {tot_mb:.1f} مگابایت</b>")
         elif downloaded_bytes:
             dl_mb = downloaded_bytes / (1024 * 1024)
             details.append(f"📦 حجم دریافت شده: <b>{dl_mb:.1f} مگابایت</b>")
@@ -328,8 +328,9 @@ def format_live_download_progress(
             extra_info = "\n" + extra_info + "\n"
 
         return (
-            f"📥 <b>در حال دانلود از سرور...</b>\n\n"
+            f"📥 <b>در حال دانلود از {plat_name}...</b>\n\n"
             f"🌐 پلتفرم: <b>{plat_name}</b>\n"
+            f"🔄 مرحله: <b>دریافت فایل از منبع اصلی (مرحله ۲ از ۳)</b>\n"
             f"📊 پیشرفت: <code>[{bar}] {percent}%</code>\n"
             f"{extra_info}\n"
             f"<i>دانلود در جریان است، لطفا شکیبا باشید...</i>"
