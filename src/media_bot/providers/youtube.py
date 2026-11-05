@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 import yt_dlp
 
 from src.media_bot.providers.url_validator import validate_url
+from src.media_bot.providers.youtube_fallback import download_youtube_fallback
 
 
 def _detect_pot_provider() -> Optional[str]:
@@ -109,54 +110,56 @@ def download_youtube_media(
             "error_message": err or "Invalid YouTube URL",
         }
 
+    if format_spec and format_spec.startswith("cobalt:"):
+        fb_res = download_youtube_fallback(
+            url=url,
+            output_dir=output_dir,
+            quality=quality,
+            progress_callback=progress_callback,
+        )
+        if fb_res and fb_res.get("success"):
+            return fb_res
+
     out_path_obj = Path(output_dir)
     out_path_obj.mkdir(parents=True, exist_ok=True)
     unique_token = uuid.uuid4().hex[:12]
     out_tmpl = str(out_path_obj / f"yt_{unique_token}_%(id)s.%(ext)s")
 
+    dedicated_proxy = os.environ.get("YOUTUBE_PROXY_URL") or os.environ.get("RESIDENTIAL_PROXY_URL") or proxy_url
     warp_proxy = _detect_warp_proxy(proxy_url)
     pot_provider = _detect_pot_provider()
     temp_cookie_path = _get_isolated_cookie_file(cookies_path)
     deno_available = bool(shutil.which("deno"))
 
     # Multi-tier fallback pipeline:
-    # Tier 1: POT Provider via WARP / direct (mints valid GVS PO Token)
-    # Tier 2: Master Cookies + Deno JS challenges (Direct or explicit proxy)
-    # Tier 3: Master Cookies + Deno JS challenges via WARP Proxy (127.0.0.1:1080)
-    # Tier 4: Alternative Player Clients via WARP Proxy
+    # Tier 1: Master Cookies + Direct Connection (highest speed, unthrottled gigabit)
+    # Tier 2: Master Cookies + Dedicated / Residential Proxy (bypasses datacenter flag)
+    # Tier 3: Master Cookies + WARP Proxy
+    # Tier 4: POT Provider via bgutil + Alternative Mobile Clients without cookies
     tiers: List[Dict[str, Any]] = []
 
-    # Priority 1: If valid cookies are available, try direct connection first (highest speed, up to 90+ MB/s!)
+    # Priority 1: Master Cookies + Direct Connection
     if temp_cookie_path:
         tiers.append({
             "tier_name": "cookies_direct",
             "cookiefile": temp_cookie_path,
-            "proxy": proxy_url or os.environ.get("PROXY_URL"),
+            "proxy": None,
             "player_clients": ["web_embedded", "web", "mweb"],
             "pot_provider": pot_provider,
         })
 
-    # Priority 2: POT provider active + WARP
-    if pot_provider:
-        primary_proxy = warp_proxy or proxy_url or os.environ.get("PROXY_URL")
+    # Priority 2: Master Cookies + Dedicated / Residential Proxy
+    if temp_cookie_path and dedicated_proxy:
         tiers.append({
-            "tier_name": "pot_warp",
+            "tier_name": "cookies_dedicated_proxy",
             "cookiefile": temp_cookie_path,
-            "proxy": primary_proxy,
+            "proxy": dedicated_proxy,
             "player_clients": ["web_embedded", "web", "mweb"],
             "pot_provider": pot_provider,
         })
-        if proxy_url and proxy_url != primary_proxy:
-            tiers.append({
-                "tier_name": "pot_proxy",
-                "cookiefile": temp_cookie_path,
-                "proxy": proxy_url,
-                "player_clients": ["web_embedded", "web", "mweb"],
-                "pot_provider": pot_provider,
-            })
 
-    # Priority 3: Cookies + WARP proxy
-    if warp_proxy and temp_cookie_path:
+    # Priority 3: Master Cookies + WARP Proxy
+    if temp_cookie_path and warp_proxy and warp_proxy != dedicated_proxy:
         tiers.append({
             "tier_name": "cookies_warp",
             "cookiefile": temp_cookie_path,
@@ -165,11 +168,12 @@ def download_youtube_media(
             "pot_provider": pot_provider,
         })
 
-    # Priority 4: No cookies + WARP proxy + alternative clients
+    # Priority 4: POT Provider + Alternative Mobile Clients (no cookies)
+    primary_proxy = dedicated_proxy or warp_proxy
     tiers.append({
-        "tier_name": "nocookies_warp",
+        "tier_name": "pot_mobile_clients",
         "cookiefile": None,
-        "proxy": warp_proxy,
+        "proxy": primary_proxy,
         "player_clients": ["web_embedded", "android", "ios", "mweb"],
         "pot_provider": pot_provider,
     })
@@ -335,6 +339,16 @@ def download_youtube_media(
                 os.remove(temp_cookie_path)
             except Exception:
                 pass
+
+    # Tier 5: Fallback API provider (Cobalt / Web Service)
+    fb_res = download_youtube_fallback(
+        url=url,
+        output_dir=output_dir,
+        quality=quality,
+        progress_callback=progress_callback,
+    )
+    if fb_res and fb_res.get("success"):
+        return fb_res
 
     if last_error_code == "bot_check_required":
         user_msg = "خطا در دانلود از یوتیوب: به دلیل محدودیت ضدربات یوتیوب امکان پردازش این لینک در حال حاضر وجود ندارد. لطفا چند دقیقه بعد مجددا تلاش کنید."
